@@ -1,7 +1,3 @@
-/* ============================================================
-   FitFusion — script.js
-   All logic: meal data, calculations, rendering, events, storage
-   ============================================================ */
 
 (function () {
   'use strict';
@@ -351,6 +347,14 @@
     const section = document.getElementById('results');
     section.classList.remove('hidden');
     section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return {
+      bmi,
+      bmr,
+      tdee,
+      targetCalories,
+      macros
+
+    };
   }
 
   function readForm() {
@@ -373,12 +377,429 @@
 
   // ---------- Events ----------
   function attachEvents() {
-    $('#plannerForm').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const data = readForm();
-      if (!validForm(data)) return;
-      generatePlan(data);
+   $('#plannerForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const data = readForm();
+
+    if (!validForm(data)) return;
+
+    // Generate the plan
+    const plan = generatePlan(data);
+
+    // Send user data to backend
+    try {
+        const response = await fetch('/api/users', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                age: data.age,
+                gender: data.gender,
+                height: data.height,
+                weight: data.weight,
+                activity: data.activity,
+                goal: data.goal,
+                diet: data.diet,
+                budget: data.budget,
+                workoutDays: data.days
+            })
+        });
+
+        console.log('POST status:', response.status);
+        if(!response.ok) {
+            throw new Error(`user API Error: ${response.status}`);
+        }
+
+        const user = await response.json();
+
+        console.log('Backend response:', user);
+        console.log('Created user ID:', user.id);
+
+        
+
+        const planResponse = await fetch('/api/fitness-plans', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userId: user.id,
+            bmi: plan.bmi,
+            bmr: plan.bmr,
+            tdee: plan.tdee,
+            targetCalories: plan.targetCalories,
+            protein: plan.macros.protein,
+            carbs: plan.macros.carbs,
+            fat: plan.macros.fat
+          })
+        });
+
+        console.log(
+          'Fitness plan POST status:',
+          planResponse.status
+        );
+
+
+            if (!planResponse.ok) {
+                throw new Error(
+                    `Fitness Plan API Error: ${planResponse.status}`
+                );
+            }
+
+            const savedPlan = await planResponse.json();
+
+            console.log('Saved fitness plan:', savedPlan);
+
+            alert(
+                `Plan saved successfully!\nUser ID: ${user.id}\nPlan ID: ${savedPlan.id}`
+            );
+
+
+    } catch (error) {
+        console.error('Error sending user data:', error);
+    }
+});
+
+
+
+const loadUsersBtn = $('#loadUsersBtn');
+
+console.log("load button:", loadUsersBtn);
+
+if(loadUsersBtn) {
+  loadUsersBtn.addEventListener('click', function (e) {
+    e.preventDefault();
+    console.log("load Users button clicked");
+    loadBackendUsers();
+  });
+
+} else {
+  console.log("load users button not found");
+}
+
+ async function loadBackendUsers() {
+  console.log("load users function started");
+  try {
+    const response = await fetch('/api/users');
+    console.log('GET status:', response.status);
+
+    if(!response.ok) {
+      throw new Error(`HTTP Error: ${response.status}`);
+    }
+
+    const users = await response.json();
+    console.log('Users from backend:', users);
+    displayUsers(users);
+  } catch (error) {
+    console.error('Error loading users:', error);
+  }
+ }
+    
+    function displayUsers(users) {
+      console.log("🔥 NEW DISPLAY USERS FUNCTION IS RUNNING 🔥");
+
+    const container = document.getElementById(
+      'backend-users-container'
+
+    );
+
+    console.log("container:", container);
+      console.log("🔥 is HTML element:", container instanceof HTMLElement);
+
+    if(!container) {
+      console.error("backend-users-container not found!");
+      return;
+    }
+
+    container.innerHTML = '';
+
+    if (users.length === 0) {
+        container.innerHTML = '<p>No users found.</p>';
+        return;
+    }
+
+    users.forEach(user => {
+
+        const userCard = document.createElement('div');
+
+        userCard.className = 'user-card';
+
+        userCard.innerHTML = `
+            <h3>User #${user.id}</h3>
+
+            <p>Age: ${user.age}</p>
+            <p>Gender: ${user.gender}</p>
+            <p>Height: ${user.height} cm</p>
+            <p>Weight: ${user.weight} kg</p>
+            <p>Activity: ${user.activity}</p>
+            <p>Goal: ${user.goal}</p>
+            <p>Diet: ${user.diet}</p>
+            <p>Budget: ${user.budget}</p>
+            <p>Workout Days: ${user.workoutDays}</p>
+            
+        `;
+        
+        const profileButton = document.createElement("button");
+        profileButton.textContent = "view profile";
+
+        profileButton.className = "view-profile-btn";
+        profileButton.addEventListener("click", () => {
+          showUserProfile(user);
+        });
+
+        userCard.appendChild(profileButton);
+
+        const editButton = document.createElement("button");
+        editButton.textContent = "Edit User";
+        editButton.className = "edit-user-btn";
+
+        editButton.addEventListener("click", () => {
+          editUser(user);
+        });
+
+        userCard.appendChild(editButton);
+
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = 'Delete User';
+        deleteButton.className = 'delete-user-btn';
+
+        deleteButton.addEventListener('click', () => {
+          deleteUser(user.id);
+        });
+
+        userCard.appendChild(deleteButton);
+
+        container.appendChild(userCard);
     });
+}
+
+ function showUserProfile(user) {
+  console.log(" selected user:", user);
+  const profileContainer =$('#selected-user');
+  if(!profileContainer) {
+    console.log("selected-user container not found!");
+    return;
+  }
+
+ const bmi = user.weight / Math.pow(user.height / 100, 2);
+  
+
+  const bmr = calcBMR(user);
+
+let activityMultiplier;
+
+if (user.activity === "sedentary") {
+    activityMultiplier = 1.2;
+} else if (user.activity === "light") {
+    activityMultiplier = 1.375;
+} else if (user.activity === "moderate") {
+    activityMultiplier = 1.55;
+} else if (user.activity === "active") {
+    activityMultiplier = 1.725;
+} else if (user.activity === "veryActive") {
+    activityMultiplier = 1.9;
+} else {
+    activityMultiplier = Number(user.activity);
+}
+
+const tdee = bmr * activityMultiplier;
+
+let profileGoal;
+
+if (user.goal === "gain") {
+    profileGoal = "bulk";
+} else if (user.goal === "lose") {
+    profileGoal = "cut";
+} else {
+    profileGoal = "maintain";
+}
+
+const target = goalAdjust(tdee, profileGoal);
+
+const macros = calcMacros(target, profileGoal);
+
+  profileContainer.innerHTML =`
+  <div class="selected-profile">
+
+  <h2>user #${user.id} profile </h2>
+
+  <div class="profile-info">
+    
+  <p>
+     <strong>Age:</strong>
+     ${user.age}
+     </p>
+     <p>
+      <strong>Gender:</strong>
+      ${user.gender}
+      </p>
+      <p>
+       <strong>Height:</strong>
+       ${user.height} cm
+      </p>
+      <p>
+       <strong>Weight:</strong>
+       ${user.weight} kg
+       </p>
+       <p>
+    <strong>BMI:</strong>
+    ${bmi.toFixed(1)}
+</p>
+
+<p>
+    <strong>BMI Status:</strong>
+    ${bmiClass(bmi)}
+</p>
+
+<p>
+    <strong>BMR:</strong>
+    ${Math.round(bmr)} calories/day
+</p>
+
+<p>
+    <strong>TDEE:</strong>
+    ${Math.round(tdee)} calories/day
+</p>
+
+<p>
+    <strong>Target Calories:</strong>
+    ${Math.round(target)} calories/day
+</p>
+
+<p>
+    <strong>Protein:</strong>
+    ${macros.protein} g/day
+</p>
+
+<p>
+    <strong>Carbs:</strong>
+    ${macros.carbs} g/day
+</p>
+
+<p>
+    <strong>Fat:</strong>
+    ${macros.fat} g/day
+</p>
+       <p>
+        <strong>Activity:</strong>
+        ${user.activity}
+        </p>
+        <p>
+         <strong>Goal:</strong>
+         ${user.goal}
+         </p>
+          <p>
+                    <strong>Diet:</strong>
+                    ${user.diet}
+                </p>
+
+                <p>
+                    <strong>Budget:</strong>
+                    ${user.budget}
+                </p>
+
+                <p>
+                    <strong>Workout Days:</strong>
+                    ${user.workoutDays} days/week
+                </p>
+
+            </div>
+
+            </div>
+
+          `;
+ }
+ 
+async function editUser(user) {
+  console.log("Editting user:", user);
+
+  const age = prompt("Enter new age:", user.age);
+
+  if(age === null){
+    return;
+  }
+
+  const weight = prompt("Enter new weight:", user.weight);
+   if(weight === null) {
+    return;
+   }
+
+   const goal = prompt("Enter new goal (gain / lose / maintain):", user.goal);
+   if(goal === null) {
+    return;
+   }
+   const updatedUser = {
+    age: Number(age),
+    gender: user.gender,
+    height: user.height,
+    weight: Number(weight),
+    activity: user.activity,
+    goal: goal,
+    diet: user.diet,
+    budget: user.budget,
+    workoutDays: user.workoutDays
+   };
+
+   console.log("Updated user data:", updatedUser);
+
+   try {
+     const response = await fetch(`/api/users/${user.id}`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+      },
+        body: JSON.stringify(updatedUser)
+      
+     });
+     console.log("PUT status:", response.status);
+     if(!response.ok) {
+      throw new Error(`HTTP Error: ${response.status}`
+
+      );
+
+     }
+     const result = await response.json();
+     console.log("updated user:", result);
+     
+     alert(`User #${user.id} updated successfully!`);
+
+     loadBackendUsers();
+   }
+   catch(error) {
+    console.log("Error updating user:", error);
+   }
+}
+   
+async function deleteUser(id) {
+    console.log("Deleting user:", id);
+    const confirmDelete = confirm(
+      `Are you sure you want to delete user #${id}?`
+    );
+
+    if (!confirmDelete) {
+        return;
+    }
+    try {
+      const response = await fetch(`/api/users/${id}`, {
+        method: 'DELETE'
+      });
+      console.log('delete status:', response.status);
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
+      }
+      const result = await response.json();
+
+      console.log("delete response:", result);
+
+      await loadBackendUsers();
+    }
+    catch (error) {
+      console.error("error deleting user:", error);
+    }
+}
+  
 
     $('#plannerForm').addEventListener('reset', () => {
       // Optional: hide results on reset
@@ -442,3 +863,210 @@
     restorePlan();
   });
 })();
+
+
+const userBtn = document.getElementById("userbtn");
+const container = document.getElementById("backend-users-container");
+const selecteduser = document.getElementById("selected-user");
+
+console.log("user button:", userBtn);
+console.log(" backend user container:", container);
+if(!userBtn){
+  console.error("userbtn not found!");
+  throw new Error("User button not found");
+}
+userBtn.addEventListener('click', () => {
+
+  console.log("show users clicked!");
+
+})
+fetch('/api/users')
+    .then(response => {
+        console.log("status:", response.status);
+
+        if (!response.ok) {
+            throw new Error(`HTTP Error: ${response.status}`);
+        }
+
+        return response.json();
+    })
+
+    .then(users => {
+        console.log("users received:", users);
+
+        if (!container || !Array.isArray(users)) {
+            throw new Error("Unable to render users");
+        }
+
+        container.innerHTML = "";
+
+        users.forEach(user => {
+
+            // Create user card
+            const userCard = document.createElement("button");
+
+            userCard.classList.add("user-card");
+
+            userCard.textContent = `User ${user.id}`;
+
+            userCard.dataset.id = user.id;
+
+
+            // When user card is clicked
+            userCard.addEventListener("click", () => {
+
+                const userId = userCard.dataset.id;
+
+                console.log("selected user ID:", userId);
+
+
+                // Get selected user
+                fetch(`/api/users/${userId}`)
+                    .then(response => {
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP Error: ${response.status}`);
+                        }
+
+                        return response.json();
+                    })
+
+                    .then(user => {
+
+                        console.log("selected user:", user);
+
+                        if (!selecteduser) {
+                            throw new Error("Selected user element not found");
+                        }
+
+
+                        // Display selected user
+                        selecteduser.innerHTML = `
+                            <div class="profile-header">
+
+                                <div class="profile-avatar">
+                                    👤
+                                </div>
+
+                                <div class="profile-title">
+
+                                    <h2>User ${user.id}</h2>
+
+                                    <span class="active-status">
+                                        <span class="status-dot"></span>
+                                        Active
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                            <div class="profile-stats">
+
+                                <div class="stat-card">
+
+                                    <div class="stat-icon">🎂</div>
+
+                                    <div>
+                                        <span class="stat-label">Age</span>
+                                        <strong>${user.age} years</strong>
+                                    </div>
+
+                                </div>
+
+
+                                <div class="stat-card">
+
+                                    <div class="stat-icon">📏</div>
+
+                                    <div>
+                                        <span class="stat-label">Height</span>
+                                        <strong>${user.height} cm</strong>
+                                    </div>
+
+                                </div>
+
+
+                                <div class="stat-card">
+
+                                    <div class="stat-icon">⚖️</div>
+
+                                    <div>
+                                        <span class="stat-label">Weight</span>
+                                        <strong>${user.weight} kg</strong>
+                                    </div>
+
+                                </div>
+
+
+                                <div class="stat-card">
+
+                                    <div class="stat-icon">🎯</div>
+
+                                    <div>
+                                        <span class="stat-label">Goal</span>
+                                        <strong>${user.goal}</strong>
+                                    </div>
+
+                                </div>
+
+
+                                <div class="stat-card">
+
+                                    <div class="stat-icon">🥗</div>
+
+                                    <div>
+                                        <span class="stat-label">Diet</span>
+                                        <strong>${user.diet}</strong>
+                                    </div>
+
+                                </div>
+
+
+                                <div class="stat-card">
+
+                                    <div class="stat-icon">💰</div>
+
+                                    <div>
+                                        <span class="stat-label">Budget</span>
+                                        <strong>${user.budget}</strong>
+                                    </div>
+
+                                </div>
+
+
+                                <div class="stat-card">
+
+                                    <div class="stat-icon">🏋️</div>
+
+                                    <div>
+                                        <span class="stat-label">Workout Days</span>
+                                        <strong>${user.workoutDays} days/week</strong>
+                                    </div>
+
+                                </div>
+
+                            </div>
+                        `;
+                    })
+
+                    .catch(error => {
+                        console.error("Error loading selected user:", error);
+                    });
+
+            });
+
+
+            // Add card to container
+            container.appendChild(userCard);
+
+        });
+
+    })
+
+    .catch(error => {
+        console.error("Error loading users:", error);
+    });
+
+    

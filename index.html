@@ -42,6 +42,7 @@
       <div class="hero-copy">
         <p class="eyebrow">Personal fitness planner</p>
         <h1>Fuel your body. <span class="accent">Own your goal.</span></h1>
+        
         <p class="lead">Get BMI, BMR &amp; TDEE, tailored macros, meal ideas, and a 7-day workout plan — all in one place.</p>
         <a href="#planner" class="btn btn-primary" data-testid="hero-cta">Start planning</a>
       </div>
@@ -58,7 +59,29 @@
     <div class="container">
       <h2 class="section-title">Tell us about you</h2>
       <p class="section-sub">We use standard formulas (Mifflin–St Jeor) — your data stays on your device.</p>
+      <p class = "section-label">FITFUSION COMMUNITY</p>
+        
+        <p>select a user to view their fitness profile.</p>
+        
+      <a href="#planner" id = "userbtn" class="btn btn-primary" data-testid="hero-cta">FITFUSION USERS</a>
+      
+    <div class="container" aria-hidden="true"></div>
+    <section class="users-section">
+    <div class = "users-header">
+      <div>
+      
+    <div id = "selected-user" class ="selected-user"></div>
+    </section>
 
+    <section id ="usersSection">
+      <h2>FITFUSION USERS</h2>
+      <button id="loadUsersBtn" type="button">
+        load users
+      </button>  
+      <div id="backend-users-container"></div>
+      <div id ="selected-user"></div>
+    </section>
+    
       <form id="plannerForm" class="card form-card" data-testid="planner-form" novalidate>
         <div class="form-grid">
           <div class="field">
