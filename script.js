@@ -470,7 +470,6 @@ console.log("load button:", loadUsersBtn);
 
 if(loadUsersBtn) {
   loadUsersBtn.addEventListener('click', function (e) {
-    e.preventDefault();
     console.log("load Users button clicked");
     loadBackendUsers();
   });
