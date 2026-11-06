@@ -22,30 +22,27 @@
 </head>
 <body>
   
-<nav class="navbar">
-    <a href="/index.html" class="logo">FitFusion</a>
 
-    <div class="nav-links">
-        <a href="/index.html">Planner</a>
-        <a href="/results.html">Results</a>
-        <a href="/tracker.html">Tracker</a>
-    </div>
-</nav>
+  
+<!-- Header -->
+<header class="site-header" data-testid="site-header">
+  <div class="container header-inner">
 
-  <!-- Header -->
-  <header class="site-header" data-testid="site-header">
-    <div class="container header-inner">
-      <a href="#" class="brand" data-testid="brand-link">
-        <span class="brand-mark">FF</span>
-        <span class="brand-name">FitFusion</span>
-      </a>
-      <nav class="nav">
-        <a href="#planner" data-testid="nav-planner">Planner</a>
-        <a href="#results" data-testid="nav-results">Results</a>
-        <a href="#tracker" data-testid="nav-tracker">Tracker</a>
-      </nav>
-    </div>
-  </header>
+    <a href="index.html" class="brand" data-testid="brand-link">
+      <span class="brand-mark">FF</span>
+      <span class="brand-name">FitFusion</span>
+    </a>
+
+    <nav class="nav">
+      <a href="index.html" data-testid="nav-planner">Planner</a>
+      <a href="results.html" data-testid="nav-results">Results</a>
+      <a href="tracker.html" data-testid="nav-tracker">Tracker</a>
+      <button id="logoutButton" type="button">Logout</button>
+    </nav>
+
+  </div>
+</header>
+
 
   <!-- Hero -->
   <section class="hero">
@@ -256,5 +253,6 @@
   </footer>
 
   <script src="script.js"></script>
+  <script src="./auth.js" defer></script>
 </body>
 </html>

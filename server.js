@@ -1,4 +1,14 @@
+
+require('dotenv').config();
+
+
 const express = require('express');
+
+const path = require("path");
+const bcrypt = require('bcrypt');
+const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
+
 const app = express();
 
 const pool = require('./db');
@@ -6,9 +16,42 @@ const port = process.env.PORT || 8080;
 
 // Middleware
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Serve FitFusion frontend
-app.use(express.static(path.join(__dirname, 'public')));
+//authenttiaction session configuration
+
+app.use(session({
+    store: new pgSession({
+        pool: pool,
+        tableName: 'session',
+        createTableIfMissing: true
+    }),
+    name: 'fitfusion.sid',
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 1000* 60* 60* 24
+    }
+}));
+
+function requirePageLogin(req, res, next){
+    if(!req.session || !req.session.userId) {
+        return res.redirect('/login.html');
+            message: 'please log in continue.'
+        
+    }
+    next();
+}
+
+app.get('/index.html', requirePageLogin, (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.use(express.static(__dirname,));
 
 // Test backend API
 //app.get('/api/test', (req, res) => {
@@ -19,6 +62,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 let users = [
     {
+
+
+        
     "id": 1,
     "age": 21,
     "gender": "male",
@@ -56,15 +102,29 @@ let users = [
 },
 
 ];
-app.get('/api/users', async (req, res) => {
+
+
+app.get('/api/users',requirePageLogin, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM users');
+        const dbInfo = await pool.query(`
+            SELECT current_database() AS databse,
+                current_user AS username,
+                current_schema() AS schema
+            `);
+
+            console.log('Node.js connected to:', dbInfo.rows[0]);
+
+
+        const result = await pool.query('SELECT * FROM users WHERE account_id = $1',
+            [req.session.userId]
+        );
         res.json(result.rows);
     }
     catch(error) {
         console.error('Error fetching users:', error);
         res.status(500).json({
-            message: 'Database error'
+            message: 'Database error',
+            error: error.message
         });
     }
 });
@@ -72,12 +132,18 @@ app.get('/api/users', async (req, res) => {
 
 
 
-app.get('/api/users/:id' , async (req , res) => {
+app.get('/api/users/:id' , requirePageLogin , async (req , res) => {
     try{
-    const id = parseInt(req.params.id);
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({
+                message: 'Invalid user ID'
+            });
+        }
 
    const result = await pool.query(
-    'SELECT * FROM users WHERE id = $1',
+    'SELECT * FROM users WHERE id = $1 AND ACCOUNT_id =$2',
     [id]
    );
 
@@ -96,7 +162,7 @@ catch (error) {
 }
 });
 
-app.post('/api/users', async (req, res) => {
+app.post('/api/users', requirePageLogin, async (req, res) => {
     try{
         
     const  {
@@ -114,10 +180,11 @@ app.post('/api/users', async (req, res) => {
     
     const result = await pool.query(
         `INSERT INTO users
-        (age, gender, height, weight, activity, goal, diet, budget, workout_days)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        (account_id, age, gender, height, weight, activity, goal, diet, budget, workout_days)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         RETURNING *`,
         [
+            req.session.userId,
             age,
             gender,
             height,
@@ -133,17 +200,27 @@ app.post('/api/users', async (req, res) => {
     res.status(201).json(result.rows[0]);
 }
 catch (error) {
-    console.error('Error creating user:', error);
-    res.status(500).json({
-        message: 'Database error'
-    });
+    if(error.code === '23505') {
+        return res.status(409).json({
+            message: 'you already have a fitness profile'
+        });
+    }
+   
 }
+console.error('Error creating profile:', error);
+res.status(500).json({ message: 'Database error' });
 });
  
-app.get('/api/users/:id/full-plan', async (req, res) => {
+app.get('/api/users/:id/full-plan', requirePageLogin, async (req, res) => {
     try {
-        const id = parseInt(req.params.id);
+        const id = Number(req.params.id);
 
+        if(!Number.isInteger(id) || id<= 0) {
+            return res.status(400).json({
+                message: 'Inavlid user ID'
+            });
+        }
+        
         const result = await pool.query(
        `SELECT 
             u.id,
@@ -170,13 +247,14 @@ app.get('/api/users/:id/full-plan', async (req, res) => {
         JOIN fitness_plans fp
         ON u.id = fp.user_id
         WHERE u.id =$1
+        AND u.account_id = $2
         ORDER BY fp.created_at DESC
         LIMIT 1`,
-        [id]
+        [id, req.session.userId]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({
-                message: 'User or fitness plan not found'
+                message: 'fitness profile or plan not found'
             });
         }
         res.json(result.rows[0]);
@@ -191,10 +269,16 @@ app.get('/api/users/:id/full-plan', async (req, res) => {
 });
 
   
-app.put('/api/users/:id', async (req, res) => {
+app.put('/api/users/:id', requirePageLogin, async (req, res) => {
     try {
 
-    const id = parseInt(req.params.id);
+    const id = Number(req.params.id);
+
+    if(!Number.isInteger(id) || id<= 0) {
+        return res.status(400).json({
+            message: 'Inavlid user ID'
+        });
+    }
     const {
     
         age,
@@ -214,12 +298,13 @@ app.put('/api/users/:id', async (req, res) => {
             gender =$2,
             height =$3,
             weight = $4,
-            activity =$5
+            activity =$5,
             goal =$6,
             diet =$7,
             budget =$8,
             workout_days =$9
             WHERE id =$10
+            AND account_id = $11
             RETURNING *`,
             [
                 age,
@@ -230,13 +315,16 @@ app.put('/api/users/:id', async (req, res) => {
                 goal,
                 diet,
                 budget,
-                workoutDays
+                workoutDays,
+                id,
+                req.session.userId
+
             ]
     );
     
     if(result.rows.length === 0) {
         return res.status(404).json({
-            message: 'User not found'
+            message: 'Fitness profile not found'
         });
     }
 
@@ -250,23 +338,29 @@ catch (error) {
     });
 }
 });
-app.delete('/api/users/:id', async (req, res) => {
+app.delete('/api/users/:id', requirePageLogin,  async (req, res) => {
     try{
 
-    const id = parseInt(req.params.id);
+    const id = Number(req.params.id);
+
+    if(!Number.isInteger(id) || id<= 0) {
+        return res.status(400).json({
+            message: 'Invalid user ID'
+        });
+    }
     const result = await pool.query(
-        'DELETE FROM users WHERE id =$1 RETURNING *',
-        [id]
+        'DELETE FROM users WHERE id =$1 AND account_id = $2 RETURNING *',
+        [id, req.session.userId]
     );
     console.log("deletd rows:", result.rows);
     if(result.rows.length === 0) {
         return res.status(404).json({
-            message:"user not found"
+            message:"Fitness profile not found"
         });
     }
    
     res.json({
-        message: "user deleted successfully"
+        message: "fitness profile deleted successfully"
     });
 }
 catch (error) {
@@ -278,7 +372,7 @@ catch (error) {
 }
 });
 
-app.post('/api/fitness-plans', async (req, res) => {
+app.post('/api/fitness-plans', requirePageLogin, async (req, res) => {
     try{
         const {
             userId,
@@ -290,16 +384,36 @@ app.post('/api/fitness-plans', async (req, res) => {
             carbs,
             fat
         } = req.body;
+         const id = Number(userId);
 
+         if(!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({
+                message: 'Inavlid fitness profile ID'
+            });
+         }
         console.log("running fitness plan INSERT...");
+      
 
+        const ownership = await pool.query(
+            `SELECT id
+            FROM users
+            WHERE id =$1
+              AND account_id = $2`,
+              [id, req.session.userId]
+        );
+
+        if(ownership.rows.length === 0) {
+            return res.status(404).json({
+                message: 'Fitness profile not found'
+            });
+        }
         const result = await pool.query(
             `INSERT INTO fitness_plans
             (user_id, bmi, bmr, tdee, target_calories, protein, carbs, fat)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *`,
             [
-                userId,
+                id,
                 bmi,
                 bmr,
                 tdee,
@@ -320,16 +434,24 @@ app.post('/api/fitness-plans', async (req, res) => {
     }
 });
 
-app.get('/api/fitness-plans/:userId', async (req, res) => {
+app.get('/api/fitness-plans/:userId', requirePageLogin, async (req, res) => {
     try {
-        const userId = parseInt(req.params.userId);
+        const userId = Number(req.params.userId);
+        if(!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({
+                message: 'Inavlid fitness profile ID'
+            });
+        }
 
         const result = await pool.query(
             `SELECT *
-            FROM fitness_plans
+            FROM fitness_plans fp
+            JOIN users u ON u.id = fp.user_id
+
             WHERE user_id = $1
-            ORDER BY created_at DESC`,
-            [userId]
+              AND u.account_id = $2
+            ORDER BY fp.created_at DESC`,
+            [id, req.session.userId]
         );
         if(result.rows.length === 0){
             return res.status(404).json({
@@ -397,11 +519,11 @@ app.get('/api/stats/overview', async (req, res) => {
     }
 });   
 
- app.post('/api/create-user-plan', async (req, res) => {
-    const client = await poolconnect();
+ app.post('/api/create-user-plan', requirePageLogin, async (req, res) => {
+    let client;
 
     try {
-        await client.query('BEGIN');
+        
 
         const {
             age,
@@ -423,12 +545,17 @@ app.get('/api/stats/overview', async (req, res) => {
             fat
         } = req.body;
 
+
+         const client = await pool.connect();
+          await client.query('BEGIN');
+
         const userResult = await client.query(
             `INSERT INTO users
-            (age, gender, height, weight, activity, goal, diet, budget, workout_days)
-            VALUES ($1, $2, $3, $4, $5, $6,$7, $8, $9)
+            (account_id, age, gender, height, weight, activity, goal, diet, budget, workout_days)
+            VALUES ($1, $2, $3, $4, $5, $6,$7, $8, $9, $10)
             RETURNING *`,
             [
+                req.session.userId,
                 age,
                 gender,
                 height,
@@ -463,24 +590,39 @@ app.get('/api/stats/overview', async (req, res) => {
         await client.query('COMMIT');
 
         res.status(201).json({
-            message: 'User and fitness plan created successfully',
+            message: 'Fitness profile and plan created successfully',
             user: user,
             fitnessPlan: planResult.rows[0]
         });
     }
     catch (error) {
-        await client.query('ROLLBACK');
+        if(client) {
+            try {
+                  await client.query('BEGIN');
+            } catch (rollbackError) {
+                console.error('Transaction roolback failed:', rollbackError)
+            }
+        }
+       if(error.code === '23505') {
+        return res.status(409).json({
+            message: 'A fitness profile already exists for this account.'
+        })
+       }
         
-        console.error('Error creating user and fitness plan:', error);
+        console.error('Error creating profile and fitness plan:', error);
 
         res.status(500).json({
-            message:'Transaction failed'
+            message:'could not create fitness profile and plan'
         });
     }
     finally {
-        client.release();
+        if (client) {
+            client.release();
+        }
+        
     }
- })
+});
+ 
 
 
  app.get('/api/stats/bmi', async (req, res) => {
@@ -512,6 +654,223 @@ app.get('/api/stats/overview', async (req, res) => {
         });
     }
  });
+
+ //register
+ app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { fullName, email, password } = req.body;
+
+        if(
+            typeof fullName !== 'string' ||
+            typeof email !== 'string' ||
+            typeof password !== 'string' ||
+            !fullName.trim() ||
+            !email.trim() ||
+            password.length < 8 ||
+            Buffer.byteLength(password, 'utf8') > 72
+        ) {
+            return res.status(400).json({
+                message: 'Enter your name, a valid email, and a password of 8-72 bytes.'
+            });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+        if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+            return res.status(400).json({
+                message: 'Enter a valid email address.'
+            });
+        }
+
+        const existing = await pool.query(
+            'SELECT id FROM users WHERE email = $1',
+            [normalizedEmail]
+        );
+
+        if(existing.rows.length > 0) {
+            return res.status(409).json({
+                message: 'An account with this email already exists. Please log in or use a different email address.'
+            });
+        }
+
+        const passwordHash = await bcrypt.hash(password, 12);
+
+        const result = await pool.query(
+            `INSERT INTO public.app_accounts (full_name, email, password_hash)
+            VALUES ($1, $2, $3)
+            RETURNING id, full_name, email, created_at`,
+            [fullName.trim(), normalizedEmail, passwordHash]
+        );
+
+        res.status(201).json({
+            message: 'Registration successful. you can now log in.',
+            user: result.rows[0]
+        });
+    }
+    catch (error) {
+        if (error.code === '23505') {
+            return res.status(409).json({
+                message: ' An account with this email already exists.'
+            });
+        }
+
+        console.error ("Registration error:", error);
+
+        res.status(500).json({
+            message: 'Could not register your account.'
+        });
+    }
+ });
+
+ //login
+ app.post('/api/auth/login', async (req, res) => {
+    try {
+        const  { email, password } = req.body;
+
+        if (
+            typeof email !== 'string' ||
+            typeof password !== 'string' ||
+            !email.trim() ||
+            !password ||
+            Buffer.byteLength(password, 'utf8') > 72
+        ) {
+            return res.status(400).json({
+                message: 'Enter your email and password.'
+            });
+        }
+
+        const result = await pool.query(
+            `SELECT id, full_name, email, password_hash
+            FROM app_accounts
+            WHERE email =$1`,
+            [email.trim().toLowerCase()]
+        );
+        const account = result.rows[0];
+
+        if(
+            !account ||
+            !(await bcrypt.compare(password, account.password_hash))
+        ) {
+            return res.status(401).json({
+                message: 'Invalid email or password.'
+            });
+        }
+        req.session.regenerate((error) => {
+            if(error) {
+                console.error('Session error:', error);
+                return res.status(500).json({
+                    message: 'Could not create your session. please try again.'
+                });
+            }
+            req.session.userId = account.id;
+
+            req.session.save((saveError) => {
+                if (saveError) {
+                    console.error('Session save error:', saveError);
+                    return res.status(500).json({
+                        message: 'Could not save your session. please try again.'
+                    });
+                }
+
+            res.json({
+                message: 'Login successful.',
+                user: {
+                    id: account.id,
+                    fullName: account.full_name,
+                    email: account.email
+                }
+            });
+            });
+        });
+    } catch (error) {
+        console.error('Login error:', error);
+
+        res.status(500).json({
+            message: 'Could not log in.'
+        });
+    }
+ 
+ });
+
+ app.get('/api/auth/me', async (req, res) => {
+    if(!req.session || !req.session.userId) {
+        return res.status(401).json({
+            loggedIn: false,
+            message: 'You are not logged in.'
+        });
+    }
+    try {
+        const result = await pool.query(
+            `SELECT id, full_name, email
+            FROM app_accounts
+            WHERE id = $1`,
+            [req.session.userId]
+        );
+        if(result.rows.length === 0) {
+            return req.session.destory(() => {
+
+                if (error) {
+                    console.error('Session destroy error:', error);
+                }
+
+                res.clearCookie('fitfusion.sid', {
+                    httpOnly: true,
+                    secure:process.env.NODE_ENV === 'production',
+                    sameSite:'lax',
+                
+                    path: '/'
+                });
+
+                res.status(401).json({
+                    loggedIn: false,
+                    message: 'Account not found.'
+                });
+            });
+        }
+
+        const account = result.rows[0];
+        return res.json({ 
+            loggedIn: true,
+            user:{
+                id: account.id,
+                fullName: account.full_name,
+                email: account.email    
+                }
+         });
+    }
+    catch (error) {
+        console.error('session check error:', error);
+
+        res.status(500).json({
+            message: 'Could not verify your session.'
+        });
+    }
+ });
+
+ //logout
+ app.post('/api/auth/logout', (req, res) => {
+    req.session.destroy((error) => {
+        if(error) {
+            console.error('Logout error:', error);
+
+            return res.status(500).json({
+                message: 'could not log out.'
+            });
+        }
+
+        res.clearCookie('fitfusion.sid', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            path: '/'
+        });
+        res.json({
+            message: 'Logged out successfully.'
+        });
+    });
+ });
+
+
+
 app.listen(port, () => {
     console.log(`FITFUSION is  running on http://localhost:${port}`);
 });
