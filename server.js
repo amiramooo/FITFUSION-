@@ -38,20 +38,34 @@ app.use(session({
     }
 }));
 
-function requirePageLogin(req, res, next){
+
+function requirePageLogin(req, res, next) {
     if(!req.session || !req.session.userId) {
         return res.redirect('/login.html');
-            message: 'please log in continue.'
+    }
+    next();
+}
+
+
+function requireLogin(req, res, next){
+    if(!req.session || !req.session.userId) {
+        return res.status(401).json({
+            success: false,
+            message: 'Please login first.'
+        });
+
         
     }
     next();
 }
 
-app.get('/index.html', requirePageLogin, (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+app.get(['/', '/index.html'], requirePageLogin, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public',  'index.html'));
 });
 
-app.use(express.static(__dirname,));
+app.use(express.static(path.join(__dirname, 'public'),{
+    index: false
+}));
 
 // Test backend API
 //app.get('/api/test', (req, res) => {
@@ -104,15 +118,10 @@ let users = [
 ];
 
 
-app.get('/api/users',requirePageLogin, async (req, res) => {
+app.get('/api/users',requireLogin, async (req, res) => {
     try {
-        const dbInfo = await pool.query(`
-            SELECT current_database() AS databse,
-                current_user AS username,
-                current_schema() AS schema
-            `);
-
-            console.log('Node.js connected to:', dbInfo.rows[0]);
+       
+            
 
 
         const result = await pool.query('SELECT * FROM users WHERE account_id = $1',
@@ -132,7 +141,7 @@ app.get('/api/users',requirePageLogin, async (req, res) => {
 
 
 
-app.get('/api/users/:id' , requirePageLogin , async (req , res) => {
+app.get('/api/users/:id' , requireLogin , async (req , res) => {
     try{
     const id = Number(req.params.id);
 
@@ -144,7 +153,7 @@ app.get('/api/users/:id' , requirePageLogin , async (req , res) => {
 
    const result = await pool.query(
     'SELECT * FROM users WHERE id = $1 AND ACCOUNT_id =$2',
-    [id]
+    [id, req.session.userId]
    );
 
     if(result.rows.length === 0) {
@@ -162,7 +171,7 @@ catch (error) {
 }
 });
 
-app.post('/api/users', requirePageLogin, async (req, res) => {
+app.post('/api/users', requireLogin, async (req, res) => {
     try{
         
     const  {
@@ -205,13 +214,15 @@ catch (error) {
             message: 'you already have a fitness profile'
         });
     }
-   
+   console.error('Error creating profile:', error);
+res.status(500).json({ 
+    message: 'Database error' 
+});
 }
-console.error('Error creating profile:', error);
-res.status(500).json({ message: 'Database error' });
+
 });
  
-app.get('/api/users/:id/full-plan', requirePageLogin, async (req, res) => {
+app.get('/api/users/:id/full-plan', requireLogin, async (req, res) => {
     try {
         const id = Number(req.params.id);
 
@@ -244,7 +255,7 @@ app.get('/api/users/:id/full-plan', requirePageLogin, async (req, res) => {
             fp.created_at AS plan_created_at
             
         from users u
-        JOIN fitness_plans fp
+        LEFT JOIN fitness_plans fp
         ON u.id = fp.user_id
         WHERE u.id =$1
         AND u.account_id = $2
@@ -269,7 +280,7 @@ app.get('/api/users/:id/full-plan', requirePageLogin, async (req, res) => {
 });
 
   
-app.put('/api/users/:id', requirePageLogin, async (req, res) => {
+app.put('/api/users/:id', requireLogin, async (req, res) => {
     try {
 
     const id = Number(req.params.id);
@@ -338,7 +349,7 @@ catch (error) {
     });
 }
 });
-app.delete('/api/users/:id', requirePageLogin,  async (req, res) => {
+app.delete('/api/users/:id', requireLogin,  async (req, res) => {
     try{
 
     const id = Number(req.params.id);
@@ -349,7 +360,7 @@ app.delete('/api/users/:id', requirePageLogin,  async (req, res) => {
         });
     }
     const result = await pool.query(
-        'DELETE FROM users WHERE id =$1 AND account_id = $2 RETURNING *',
+        'DELETE FROM users WHERE id =$1 AND account_id = $2 RETURNING id',
         [id, req.session.userId]
     );
     console.log("deletd rows:", result.rows);
@@ -372,7 +383,7 @@ catch (error) {
 }
 });
 
-app.post('/api/fitness-plans', requirePageLogin, async (req, res) => {
+app.post('/api/fitness-plans', requireLogin, async (req, res) => {
     try{
         const {
             userId,
@@ -434,24 +445,23 @@ app.post('/api/fitness-plans', requirePageLogin, async (req, res) => {
     }
 });
 
-app.get('/api/fitness-plans/:userId', requirePageLogin, async (req, res) => {
+app.get('/api/fitness-plans/:userId', requireLogin, async (req, res) => {
     try {
         const userId = Number(req.params.userId);
-        if(!Number.isInteger(id) || id <= 0) {
+        if(!Number.isInteger(userId) || id <= 0) {
             return res.status(400).json({
                 message: 'Inavlid fitness profile ID'
             });
         }
 
         const result = await pool.query(
-            `SELECT *
+            `SELECT fp.*
             FROM fitness_plans fp
             JOIN users u ON u.id = fp.user_id
-
-            WHERE user_id = $1
-              AND u.account_id = $2
+            WHERE fp.user_id = $1
+            AND u.account_id = $2
             ORDER BY fp.created_at DESC`,
-            [id, req.session.userId]
+            [userId, req.session.userId]
         );
         if(result.rows.length === 0){
             return res.status(404).json({
@@ -469,7 +479,7 @@ app.get('/api/fitness-plans/:userId', requirePageLogin, async (req, res) => {
       }
 });
 
-app.get('/api/stats/goals', async (req, res) => {
+app.get('/api/stats/goals', requireLogin, async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT
@@ -479,8 +489,10 @@ app.get('/api/stats/goals', async (req, res) => {
                 ROUND(AVG(activity), 2) AS average_activity
             FROM users
             GROUP BY goal
-            ORDER BY total_users DESC
-        `);
+            WHERE account_id = $1
+            ORDER BY total_users DESC`,
+            [req.session.userId]
+        );
 
         res.json(result.rows);
 
@@ -494,7 +506,7 @@ app.get('/api/stats/goals', async (req, res) => {
 });
 
  
-app.get('/api/stats/overview', async (req, res) => {
+app.get('/api/stats/overview', requireLogin, async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT
@@ -505,9 +517,11 @@ app.get('/api/stats/overview', async (req, res) => {
              ROUND(AVG(fp.bmi), 2) AS average_bmi,
              ROUND(AVG(fp.target_calories), 2) AS average_target_calories
             FROM users u
-            JOIN fitness_plans fp
+            LEFT JOIN fitness_plans fp
             ON u.id = fp.user_id
-             `);
+            WHERE u.account_id = $1`,
+        [req.session.userId]
+        );
              res.json(result.rows[0]);
     }
     catch (error) {
@@ -519,9 +533,9 @@ app.get('/api/stats/overview', async (req, res) => {
     }
 });   
 
- app.post('/api/create-user-plan', requirePageLogin, async (req, res) => {
+ app.post('/api/create-user-plan', requireLogin, async (req, res) => {
     let client;
-
+    let transactionStarted = false;
     try {
         
 
@@ -547,7 +561,8 @@ app.get('/api/stats/overview', async (req, res) => {
 
 
          const client = await pool.connect();
-          await client.query('BEGIN');
+         await client.query('BEGIN');
+         transactionStarted = true;
 
         const userResult = await client.query(
             `INSERT INTO users
@@ -596,9 +611,10 @@ app.get('/api/stats/overview', async (req, res) => {
         });
     }
     catch (error) {
-        if(client) {
+        if(client && transactionStarted) {
             try {
-                  await client.query('BEGIN');
+                  await client.query('ROLLBACK');
+                  transactionStarted =false;
             } catch (rollbackError) {
                 console.error('Transaction roolback failed:', rollbackError)
             }
@@ -606,7 +622,7 @@ app.get('/api/stats/overview', async (req, res) => {
        if(error.code === '23505') {
         return res.status(409).json({
             message: 'A fitness profile already exists for this account.'
-        })
+        });
        }
         
         console.error('Error creating profile and fitness plan:', error);
@@ -625,7 +641,7 @@ app.get('/api/stats/overview', async (req, res) => {
  
 
 
- app.get('/api/stats/bmi', async (req, res) => {
+ app.get('/api/stats/bmi', requireLogin, async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT
@@ -639,10 +655,12 @@ app.get('/api/stats/overview', async (req, res) => {
                 ELSE 'obese'
                 END AS bmi_category
             FROM users u
-            JOIN fitness_plans fp
+            LEFT JOIN fitness_plans fp
             ON u.id = fp.user_id
+            WHERE u.account_id =$1
             ORDER BY fp.bmi;
-            `);
+            `,[req.session.userId]
+        );
 
             res.json(result.rows);
     }
@@ -682,7 +700,7 @@ app.get('/api/stats/overview', async (req, res) => {
         }
 
         const existing = await pool.query(
-            'SELECT id FROM users WHERE email = $1',
+            'SELECT id FROM app_accounts WHERE email = $1',
             [normalizedEmail]
         );
 
@@ -806,7 +824,7 @@ app.get('/api/stats/overview', async (req, res) => {
             [req.session.userId]
         );
         if(result.rows.length === 0) {
-            return req.session.destory(() => {
+            return req.session.destroy((error) => {
 
                 if (error) {
                     console.error('Session destroy error:', error);
